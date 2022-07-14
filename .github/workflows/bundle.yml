@@ -1,0 +1,151 @@
+name: Build bundle
+
+on:
+  push:
+    branches:
+      - lambdadog/fugashi-bundled
+  create:
+
+jobs:
+  build_windows:
+    runs-on: windows-latest
+    strategy:
+      max-parallel: 4
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10']
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Download mecab
+      shell: bash
+      run: |
+        curl -LO "https://github.com/chezou/mecab/releases/download/mecab-0.996-msvc-5/mecab-msvc-x64.zip"
+        unzip -o "mecab-msvc-x64.zip" -d c:/mecab
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade setuptools wheel pip machomachomangler
+        pip install -r requirements.txt
+    - name: Build PyExt
+      run: |
+        python setup.py build
+    - name: Prepare for upload
+      shell: bash
+      run: |
+        mkdir -p upload/
+        mv build/lib.*/fugashi/*.py upload/
+
+        # SHA256 added to avoid "Known DLL" table
+        DLL_NOISE=$(sha256sum c:/mecab/libmecab.dll | cut -c1-8)
+        cp c:/mecab/libmecab.dll upload/libmecab.${DLL_NOISE}.dll
+
+        # Mangle PYD so it looks for the right DLL name
+        for pyd in build/lib.*/fugashi/*.pyd; do
+          python -m machomachomangler.cmd.redll \
+            "${pyd}" "upload/$(basename "${pyd}")" \
+            'libmecab.dll' "libmecab.${DLL_NOISE}.dll"
+        done
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bundle
+        path: upload
+
+  build_macos:
+    runs-on: macos-latest
+    strategy:
+      max-parallel: 4
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10']
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: x64
+    - name: Build mecab
+      shell: bash
+      run: |
+        git clone --depth=1 https://github.com/taku910/mecab.git
+        cd mecab/mecab
+        ./configure --enable-utf8-only --prefix=${GITHUB_WORKSPACE}/mecab-out
+        make
+        make install
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade setuptools wheel pip
+        pip install -r requirements.txt
+    - name: Build PyExt
+      run: |
+        # Add mecab-config to path
+        export PATH=$PATH:$PWD/mecab-out/bin
+
+        python setup.py build
+    - name: Prepare for upload
+      shell: bash
+      run: |
+        mkdir -p upload/
+        mv build/lib.*/fugashi/* upload/
+        mv LICENSE* upload/
+        cp mecab-out/lib/libmecab.2.dylib upload/libmecab.dylib
+
+        # Modify load instructions so the PyExt knows to look in the right place
+        install_name_tool -change "${GITHUB_WORKSPACE}/mecab-out/lib/libmecab.2.dylib" '@loader_path/libmecab.dylib' upload/fugashi.*.so
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bundle
+        path: upload
+
+  build_linux-x86_64:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 4
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10']
+        include:
+        - python-version: '3.7'
+          py-short: 'cp37-cp37m'
+        - python-version: '3.8'
+          py-short: 'cp38-cp38'
+        - python-version: '3.9'
+          py-short: 'cp39-cp39'
+        - python-version: '3.10'
+          py-short: 'cp310-cp310'
+    steps:
+    - uses: actions/checkout@v1
+    - uses: docker/setup-qemu-action@v1
+    - name: Run manylinux build
+      uses: ./.github/workflows/actions/build-manylinux/
+      with:
+        python-tag: ${{ matrix.py-short }}
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bundle
+        path: upload
+
+  build_linux-aarch64:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 4
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10']
+        include:
+        - python-version: '3.7'
+          py-short: 'cp37-cp37m'
+        - python-version: '3.8'
+          py-short: 'cp38-cp38'
+        - python-version: '3.9'
+          py-short: 'cp39-cp39'
+        - python-version: '3.10'
+          py-short: 'cp310-cp310'
+    steps:
+    - uses: actions/checkout@v1
+    - uses: docker/setup-qemu-action@v1
+    - name: Run manylinux build
+      uses: ./.github/workflows/actions/build-manylinux-aarch64/
+      with:
+        python-tag: ${{ matrix.py-short }}
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bundle
+        path: upload

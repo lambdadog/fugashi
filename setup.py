@@ -3,11 +3,16 @@ import setuptools
 import subprocess
 from setuptools import setup
 from distutils.extension import Extension
+import sys
 
 from fugashi_util import check_libmecab
 
 # get the build parameters
-output, data_files = check_libmecab()
+if sys.argv[1] == "sdist":
+    # hack for automated builds
+    output, data_files = [], []
+else:
+    output, data_files = check_libmecab()
 
 # pad the list in case something's missing
 mecab_config = list(output) + ([''] * 5)
@@ -25,8 +30,7 @@ extensions = Extension('fugashi.fugashi',
         extra_objects=extra_objects,
         extra_link_args=extra_link_args)
 
-setup(name='fugashi', 
-      use_scm_version=True,
+setup(name='fugashi',
       author="Paul O'Leary McCann",
       author_email="polm@dampfkraft.com",
       description="A Cython MeCab wrapper for fast, pythonic Japanese tokenization.",
@@ -51,4 +55,4 @@ setup(name='fugashi',
           'unidic': ['unidic'],
           'unidic-lite': ['unidic-lite'],
       },
-      setup_requires=['wheel', 'Cython', 'setuptools_scm'])
+      setup_requires=['wheel', 'Cython'])
